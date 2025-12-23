@@ -23,8 +23,8 @@ Most auth libraries are either too simple (`jsonwebtoken`) or too heavy (`Passpo
 
 ## 📦 Installation
 
-```bash
 npm install zen-auth
+
 🚀 Quick Start
 1. Initialize
 TypeScript
