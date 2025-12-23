@@ -3,10 +3,10 @@
 > **Stateful Security, Stateless Speed.**  
 > An enterprise-grade identity management library featuring "Graceful Token Rotation," Device Fingerprinting, and Sliding Window sessions.
 
-![TypeScript](https://img.shields.io/badge/Language-TypeScript-blue)
-![Coverage](https://img.shields.io/badge/Tests-100%25_Passing-green)
-![License](https://img.shields.io/badge/License-MIT-purple)
-![Size](https://img.shields.io/badge/Size-Lightweight-orange)
+[![NPM Version](https://img.shields.io/npm/v/@namra_ace/zen-auth?style=flat-square)](https://www.npmjs.com/package/@namra_ace/zen-auth)
+![TypeScript](https://img.shields.io/badge/Language-TypeScript-blue?style=flat-square)
+![Tests](https://img.shields.io/badge/Tests-100%25_Passing-green?style=flat-square)
+![License](https://img.shields.io/badge/License-MIT-purple?style=flat-square)
 
 ---
 
@@ -16,158 +16,210 @@ In modern web development, you typically have to choose between **Security** (sh
 
 **ZenAuth gives you both.** It uses a **Hybrid Architecture** to maintain security without forcing users to log in repeatedly.
 
-| Feature         | Standard JWT               | ZenAuth                     |
-|------------------|----------------------------|-----------------------------|
-| **Revocation**   | ❌ Impossible until expiry | ✅ Instant (DB Backed)      |
-| **Performance**  | ✅ High (Stateless)        | ✅ High (Redis Caching)     |
-| **UX**           | ❌ Hard Logout on expiry   | ✅ Graceful Auto-Rotation   |
-| **Device Mgmt**  | ❌ None                    | ✅ Active Sessions View     |
+| Feature         | Standard JWT                | ZenAuth                     |
+|------------------|-----------------------------|-----------------------------|
+| **Revocation**   | ❌ Impossible until expiry  | ✅ **Instant** (DB Backed)  |
+| **Performance**  | ✅ High (Stateless)         | ✅ **High** (Redis Caching) |
+| **UX**           | ❌ Hard Logout on expiry    | ✅ **Graceful Auto-Rotation** |
+| **Device Mgmt**  | ❌ None                     | ✅ **Active Sessions View** |
 
 ---
 
-## 🌟 Key Features
+## 📦 Installation
 
-- **🛡️ Dual-Layer Verification:** Combines 1-minute ephemeral JWTs with 30-day database sessions.
-- **🔄 Graceful Expiration:** Solves the "Idle Logout" problem. If a token expires but the user is active, the system transparently issues a fresh one.
-- **📱 Device Fingerprinting:** Automatically captures IP, User-Agent, and Login Time for security auditing.
-- **🕵️ Active Sessions Dashboard:** Allows users to see *"Logged in on Chrome (Windows)"* and remotely revoke specific devices.
-- **🔌 Database Agnostic:** Native adapters for **Redis**, **MongoDB**, **PostgreSQL**, and Memory.
-
----
-
-## 🏗️ System Architecture
-
-### 1. The "Graceful Expiration" Flow
-
-Instead of rejecting an expired token immediately, ZenAuth checks the database to see if the user's *session* is still valid. If it is, the request is allowed, and a new token is sent back automatically.
-
-```mermaid
-sequenceDiagram
-    participant Client
-    participant Middleware
-    participant Database
-
-    Client->>Middleware: Sends Request (Token Expired)
-    Middleware->>Middleware: Signature Valid? ✅
-    Middleware->>Middleware: Time Check: Expired ❌
-    
-    Note right of Middleware: "Graceful Rescue" Triggered
-    
-    Middleware->>Database: Check Session ID
-    Database-->>Middleware: Session Active (30 Days left)
-    
-    Middleware->>Client: 200 OK + New Token (Header)
-```
-
-### 2. Secondary Indexing (Redis)
-
-To support `getActiveSessions()` efficiently without scanning the entire database (which is O(N) and slow), ZenAuth maintains a Secondary Index using Redis Sets.
-
-- **Key 1 (Data):** `session:123 → { user: 'A', ip: '...' }`
-- **Key 2 (Index):** `idx:user:A → [ 'session:123', 'session:456' ]`
-
-This ensures O(1) lookup performance even with millions of users.
-
----
-
-## 🚀 Installation
+Install ZenAuth via npm:
 
 ```bash
-npm install zen-auth
+npm install @namra_ace/zen-auth
 ```
 
 ---
 
-## 🏃 Quick Start
+## 🚀 Quick Start
 
 ### 1. Initialize
 
-ZenAuth works with your existing database. Here is a Redis example:
+ZenAuth is database-agnostic. Below is a standard production setup using Redis:
 
 ```typescript
-import { ZenAuth, RedisStore } from 'zen-auth';
+import { ZenAuth, RedisStore } from '@namra_ace/zen-auth';
 import { createClient } from 'redis';
 
+// 1. Connect to Redis
 const redis = createClient();
 await redis.connect();
 
+// 2. Initialize Auth Engine
 const auth = new ZenAuth({
-  secret: process.env.JWT_SECRET,
-  store: new RedisStore(redis),
-  sessionDuration: 30 * 24 * 60 * 60, // 30 Days
-  tokenDuration: '1m' // Rotate every minute
-});
-```
-
-### 2. Login & Capture Device Info
-
-Pass the request object (`req`) so ZenAuth can fingerprint the device.
-
-```typescript
-app.post('/login', async (req, res) => {
-  // 1. Verify credentials (your logic)
-  const user = await checkPassword(req.body.email, req.body.password);
-  
-  // 2. Create Session
-  const { token } = await auth.login({ id: user.id }, req);
-  
-  res.json({ token });
-});
-```
-
-### 3. Build the "Security Dashboard"
-
-This feature is what makes ZenAuth stand out. Allow users to manage their own security.
-
-```typescript
-import { gatekeeper } from 'zen-auth/middleware';
-
-// GET /sessions -> Returns active devices
-app.get('/sessions', gatekeeper(auth), async (req, res) => {
-  const sessions = await auth.getActiveSessions(req.user.id);
-  res.json(sessions);
-});
-/* Response:
-[
-  { 
-    device: { ip: '192.168.1.5', userAgent: 'Chrome on MacOS' }, 
-    loginAt: '2023-10-27T10:00:00Z' 
-  }
-]
-*/
-
-// POST /logout-all -> Emergency kill switch
-app.post('/logout-all', gatekeeper(auth), async (req, res) => {
-  await auth.logoutAll(req.user.id);
-  res.send('Logged out of all devices.');
+    secret: process.env.JWT_SECRET || 'super-secret',
+    store: new RedisStore(redis),
+    sessionDuration: 30 * 24 * 60 * 60, // 30 Days (Sliding Window)
+    tokenDuration: '15m',               // Rotate token every 15 mins
+    smtp: {                             // Optional: For Email OTP
+        host: 'smtp.example.com',
+        auth: { user: '...', pass: '...' }
+    }
 });
 ```
 
 ---
 
-## 🧪 Testing
+### 2. Login (Capture Device Info)
 
-This library is built with Test Driven Development (TDD) using Vitest.
+Pass the request object (`req`) so ZenAuth can fingerprint the device (IP/User-Agent).
 
-```bash
-# Run the full test suite
-npm run test
+```typescript
+import express from 'express';
+const app = express();
+
+app.post('/api/login', async (req, res) => {
+    // ... validate user credentials first ...
+    const userId = 'user_123'; 
+
+    // Create Session & Token
+    const { token, sessionId } = await auth.login({ id: userId, role: 'admin' }, req);
+
+    res.json({ token });
+});
 ```
-
-### Coverage Includes:
-
-- ✅ Token Tampering (Invalid Signature)
-- ✅ Replay Attacks (OTP Verification)
-- ✅ Idle Timeouts vs Active Usage
-- ✅ Device Metadata Storage
 
 ---
 
-## 🔌 Adapters Supported
+### 3. Protect Routes (Middleware)
 
-| Adapter       | Use Case                       |
-|---------------|--------------------------------|
-| **MemoryStore** | Local Development / Testing   |
-| **RedisStore**  | Production (Recommended) - Fastest |
-| **MongoStore**  | Document-based persistence    |
-| **PostgresStore** | SQL-based persistence       |
+Use the included `gatekeeper` middleware to secure endpoints. It automatically handles Graceful Expiration.
+
+```typescript
+import { gatekeeper } from '@namra_ace/zen-auth/middleware';
+
+app.get('/api/profile', gatekeeper(auth), (req, res) => {
+    // If token was rotated, the new one is in res.headers['x-zen-token']
+    res.json({ message: `Hello User ${req.user.id}` });
+});
+```
+
+---
+
+## 🔌 Database Adapters
+
+ZenAuth works with any database. Import the specific adapter you need.
+
+### Redis (Recommended for Speed)
+
+Uses Secondary Indexing (Sets) to map Users ↔ Sessions for O(1) lookups.
+
+```typescript
+import { RedisStore } from '@namra_ace/zen-auth/adapters';
+// Requires 'redis' package installed
+const store = new RedisStore(redisClient);
+```
+
+### PostgreSQL (Persistent)
+
+Requires a table with columns: `sid` (text), `sess` (json), `expired_at` (timestamp).
+
+```typescript
+import { PostgresStore } from '@namra_ace/zen-auth/adapters';
+// Requires 'pg' pool
+const store = new PostgresStore(pool, 'auth_sessions_table');
+```
+
+### MongoDB
+
+Stores sessions as documents. Good for no-setup environments.
+
+```typescript
+import { MongoStore } from '@namra_ace/zen-auth/adapters';
+// Requires 'mongoose' connection
+const store = new MongoStore(mongoose.connection.collection('sessions'));
+```
+
+---
+
+## 🧠 Advanced Features
+
+### 📱 Device Management Dashboard
+
+Allow users to see all their logged-in devices and remotely log them out (like Netflix/Google).
+
+```typescript
+// GET /api/devices
+app.get('/api/devices', gatekeeper(auth), async (req, res) => {
+    // Returns: [{ device: { ip: '...', userAgent: 'Chrome' }, loginAt: '...' }]
+    const sessions = await auth.getActiveSessions(req.user.id);
+    res.json(sessions);
+});
+
+// POST /api/devices/logout-all
+app.post('/api/devices/logout-all', gatekeeper(auth), async (req, res) => {
+    await auth.logoutAll(req.user.id);
+    res.json({ success: true, message: "Logged out of all other devices" });
+});
+```
+
+---
+
+### 📧 Passwordless Login (OTP)
+
+Built-in support for generating and verifying Email One-Time-Passwords.
+
+```typescript
+// 1. Send Code
+app.post('/auth/send-code', async (req, res) => {
+    await auth.sendOTP(req.body.email);
+    res.send('Code sent!');
+});
+
+// 2. Verify & Login
+app.post('/auth/verify-code', async (req, res) => {
+    const { valid } = await auth.verifyOTP(req.body.email, req.body.code);
+    
+    if (valid) {
+        const { token } = await auth.login({ email: req.body.email }, req);
+        res.json({ token });
+    } else {
+        res.status(401).send('Invalid Code');
+    }
+});
+```
+
+---
+
+## 🏗️ Architecture: "Graceful Expiration"
+
+This is the core problem ZenAuth solves.
+
+**Scenario:** User leaves a tab open for 20 minutes. The 15-minute JWT expires.  
+
+- **Standard Library:** Request fails (401). User is forced to log in again. 😡  
+- **ZenAuth:** Middleware catches the expiry error, checks the database, and issues a new token if the session is still valid.
+
+```mermaid
+sequenceDiagram
+        participant Client
+        participant Middleware
+        participant Database
+
+        Client->>Middleware: Sends Request (Token Expired)
+        Middleware->>Middleware: Signature Valid? ✅
+        Middleware->>Middleware: Time Check: Expired ❌
+        
+        Note right of Middleware: "Graceful Rescue" Triggered
+        
+        Middleware->>Database: Check Session ID
+        Database-->>Middleware: Session Active (30 Days left)
+        
+        Middleware->>Client: 200 OK + New Token (Header)
+```
+
+---
+
+## 🧪 Security & Testing
+
+This library is 100% covered by tests using Vitest.
+
+- ✅ **Replay Protection:** OTPs are deleted immediately after use.
+- ✅ **Tamper Proofing:** Tokens signed with invalid secrets are rejected immediately.
+- ✅ **Lazy Cleanup:** Expired sessions are automatically cleaned up from the user index during read operations to prevent memory leaks.
+
+---
