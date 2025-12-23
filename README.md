@@ -1,7 +1,7 @@
 # 🛡️ AceAuth
 
-> **Stateful Security, Stateless Speed.**  
-> An enterprise-grade identity management library featuring "Graceful Token Rotation," Device Fingerprinting, and Sliding Window sessions.
+> **Stateful security. Stateless speed.**  
+> A production-grade authentication engine that combines JWT performance with server-side control using a hybrid, cache-aware architecture.
 
 [![NPM Version](https://img.shields.io/npm/v/ace-auth?style=flat-square)](https://www.npmjs.com/package/ace-auth)
 ![TypeScript](https://img.shields.io/badge/Language-TypeScript-blue?style=flat-square)
@@ -12,22 +12,47 @@
 
 ## 💡 Why AceAuth?
 
-In modern web development, you typically have to choose between **Security** (short-lived JWTs) and **User Experience** (long-lived sessions).  
+Most authentication systems force a trade-off:
 
-**AceAuth gives you both.** It uses a **Hybrid Architecture** to maintain security without forcing users to log in repeatedly.
+- **Stateless JWTs** → Fast, scalable, but impossible to revoke  
+- **Server sessions** → Secure and controllable, but harder to scale  
 
-| Feature         | Standard JWT                  | AceAuth                     |
-|------------------|-------------------------------|-----------------------------|
-| **Revocation**   | ❌ Impossible until expiry    | ✅ **Instant** (DB Backed)  |
-| **Performance**  | ✅ High (Stateless)           | ✅ **High** (Redis Caching) |
-| **UX**           | ❌ Hard Logout on expiry      | ✅ **Graceful Auto-Rotation** |
-| **Device Mgmt**  | ❌ None                       | ✅ **Active Sessions View** |
+**AceAuth removes this trade-off.**
+
+AceAuth uses:
+- **JWTs as identifiers (not authority)**
+- **A database as the source of truth**
+- **A two-tier cache (RAM + DB) for performance**
+
+This allows AceAuth to provide:
+- Immediate revocation
+- Transparent token rotation
+- High throughput on hot paths
+- Explicit, documented trade-offs
+
+---
+
+## 🧠 Architecture Overview
+
+```
+Client
+  ↓
+JWT (sessionId only)
+  ↓
+L1 Cache (RAM, short TTL)
+  ↓
+L2 Store (Redis / SQL / Mongo)
+```
+
+- **Hot path**: Served entirely from RAM  
+- **Cold path**: Falls back to database  
+- **Writes**: Throttled to avoid load amplification  
+
+Bounded inconsistency window: **≤ cacheTTL (default: 2 seconds)**
 
 ---
 
 ## 📦 Installation
-
-Install AceAuth via npm:
 
 ```bash
 npm install ace-auth
@@ -37,183 +62,235 @@ npm install ace-auth
 
 ## 🚀 Quick Start
 
-### 1. Initialize
+### 1️⃣ Initialize AceAuth
 
-AceAuth is database-agnostic. Below is a standard production setup using Redis:
+AceAuth is storage-agnostic. You can plug in any supported database adapter.
 
-```typescript
-import { AceAuth, RedisStore } from 'ace-auth';
+```ts
+import { AceAuth } from 'ace-auth';
+
+const auth = new AceAuth({
+  secret: process.env.JWT_SECRET!,
+  store: yourStore,
+  sessionDuration: 30 * 24 * 60 * 60, // 30 days
+  tokenDuration: '15m',
+  cacheTTL: 2000
+});
+```
+
+---
+
+## 🔐 Authentication Flow
+
+### Login
+
+```ts
+const { token, sessionId } = await auth.login(
+  { id: user.id, role: 'user' },
+  req
+);
+```
+
+- Creates a session in the database
+- Stores session in L1 cache
+- Issues a short-lived JWT (identifier only)
+
+---
+
+### Protect Routes (Middleware)
+
+```ts
+import { gatekeeper } from 'ace-auth/middleware';
+
+app.get('/profile', gatekeeper(auth), (req, res) => {
+  res.json({ user: req.user });
+});
+```
+
+If a token expires but the session is valid, AceAuth **automatically rotates it** and returns a new token via:
+
+```
+X-Ace-Token: <new-token>
+```
+
+---
+
+## 🔌 Database Adapters (Full Implementations)
+
+AceAuth works with any persistent store implementing `IStore`.
+
+---
+
+## 🟥 Redis Adapter (Recommended)
+
+### When to use
+- High traffic APIs
+- Real-time systems
+- Horizontally scaled services
+
+### Setup
+
+```ts
 import { createClient } from 'redis';
+import { RedisStore } from 'ace-auth/adapters';
 
-// 1. Connect to Redis
 const redis = createClient();
 await redis.connect();
 
-// 2. Initialize Auth Engine
-const auth = new AceAuth({
-    secret: process.env.JWT_SECRET || 'super-secret',
-    store: new RedisStore(redis),
-    sessionDuration: 30 * 24 * 60 * 60, // 30 Days (Sliding Window)
-    tokenDuration: '15m',               // Rotate token every 15 mins
-    smtp: {                             // Optional: For Email OTP
-        host: 'smtp.example.com',
-        auth: { user: '...', pass: '...' }
-    }
-});
+const store = new RedisStore(redis);
 ```
 
-### 2. Login (Capture Device Info)
-
-Pass the request object (`req`) so AceAuth can fingerprint the device (IP/User-Agent).
-
-```typescript
-import express from 'express';
-const app = express();
-
-app.post('/api/login', async (req, res) => {
-    // ... validate user credentials first ...
-    const userId = 'user_123'; 
-
-    // Create Session & Token
-    const { token, sessionId } = await auth.login({ id: userId, role: 'admin' }, req);
-
-    res.json({ token });
-});
-```
-
-### 3. Protect Routes (Middleware)
-
-Use the included gatekeeper middleware to secure endpoints. It automatically handles Graceful Expiration.
-
-```typescript
-import { gatekeeper } from 'ace-auth/middleware';
-
-app.get('/api/profile', gatekeeper(auth), (req, res) => {
-    // If token was rotated, the new one is in res.headers['x-ace-token']
-    res.json({ message: `Hello User ${req.user.id}` });
-});
-```
+### How it works
+- Sessions stored as `sessionId → payload`
+- Secondary index: `userId → set(sessionIds)`
+- TTL enforced by Redis
+- O(1) lookup for session revocation
 
 ---
 
-## 🔌 Database Adapters
+## 🟦 PostgreSQL Adapter
 
-AceAuth works with any database. Import the specific adapter you need.
+### When to use
+- Strong consistency requirements
+- Existing SQL infrastructure
+- Auditable session history
 
-### Redis (Recommended for Speed)
+### Schema
 
-Uses Secondary Indexing (Sets) to map Users ↔ Sessions for O(1) lookups.
+```sql
+CREATE TABLE auth_sessions (
+  sid TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  sess JSONB NOT NULL,
+  expires_at TIMESTAMP NOT NULL
+);
 
-```typescript
-import { RedisStore } from 'ace-auth/adapters';
-// Requires 'redis' package installed
-const store = new RedisStore(redisClient);
+CREATE INDEX idx_auth_sessions_user
+ON auth_sessions(user_id);
 ```
 
-### PostgreSQL (Persistent)
+### Setup
 
-Requires a table with columns: `sid` (text), `sess` (json), `expired_at` (timestamp).
-
-```typescript
+```ts
+import { Pool } from 'pg';
 import { PostgresStore } from 'ace-auth/adapters';
-// Requires 'pg' pool
-const store = new PostgresStore(pool, 'auth_sessions_table');
+
+const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+
+const store = new PostgresStore(pool, 'auth_sessions');
 ```
 
-### MongoDB
+### Notes
+- Expired sessions are lazily cleaned
+- Indexed by `user_id` for fast logout-all
+- Suitable for compliance-heavy systems
 
-Stores sessions as documents. Good for no-setup environments.
+---
 
-```typescript
+## 🟩 MongoDB Adapter
+
+### When to use
+- Document-based stacks
+- Rapid prototyping
+- Flexible schemas
+
+### Schema (Example)
+
+```js
+{
+  _id: sessionId,
+  userId: "user_123",
+  sess: { ... },
+  expiresAt: ISODate()
+}
+```
+
+### Setup
+
+```ts
+import mongoose from 'mongoose';
 import { MongoStore } from 'ace-auth/adapters';
-// Requires 'mongoose' connection
-const store = new MongoStore(mongoose.connection.collection('sessions'));
+
+await mongoose.connect(process.env.MONGO_URL);
+
+const store = new MongoStore(
+  mongoose.connection.collection('auth_sessions')
+);
 ```
+
+### Notes
+- TTL index recommended on `expiresAt`
+- Simple setup, no migrations required
 
 ---
 
-## 🧠 Advanced Features
+## 📱 Device & Session Management
 
-### 📱 Device Management Dashboard
+```ts
+// List active sessions
+const sessions = await auth.getActiveSessions(userId);
 
-Allow users to see all their logged-in devices and remotely log them out (like Netflix/Google).
-
-```typescript
-// GET /api/devices
-app.get('/api/devices', gatekeeper(auth), async (req, res) => {
-    const sessions = await auth.getActiveSessions(req.user.id);
-    res.json(sessions);
-});
-
-// POST /api/devices/logout-all
-app.post('/api/devices/logout-all', gatekeeper(auth), async (req, res) => {
-    await auth.logoutAll(req.user.id);
-    res.json({ success: true, message: "Logged out of all other devices" });
-});
+// Logout everywhere
+await auth.logoutAll(userId);
 ```
 
-### 📧 Passwordless Login (OTP)
-
-Built-in support for generating and verifying Email One-Time-Passwords.
-
-```typescript
-// 1. Send Code
-app.post('/auth/send-code', async (req, res) => {
-    await auth.sendOTP(req.body.email);
-    res.send('Code sent!');
-});
-
-// 2. Verify & Login
-app.post('/auth/verify-code', async (req, res) => {
-    const { valid } = await auth.verifyOTP(req.body.email, req.body.code);
-    
-    if (valid) {
-        const { token } = await auth.login({ email: req.body.email }, req);
-        res.json({ token });
-    } else {
-        res.status(401).send('Invalid Code');
-    }
-});
-```
+- Device info captured at login
+- Bounded cache delay ≤ cacheTTL
+- Redis/DB is always source of truth
 
 ---
 
-## 🏗️ Architecture: "Graceful Expiration"
+## 📧 Passwordless OTP (Email)
 
-This is the core problem AceAuth solves.
-
-**Scenario:** User leaves a tab open for 20 minutes. The 15-minute JWT expires.  
-
-- **Standard Library:** Request fails (401). User is forced to log in again. 😡  
-- **AceAuth:** Middleware catches the expiry error, checks the database, and issues a new token if the session is still valid.
-
-```mermaid
-sequenceDiagram
-        participant Client
-        participant Middleware
-        participant Database
-
-        Client->>Middleware: Sends Request (Token Expired)
-        Middleware->>Middleware: Signature Valid? ✅
-        Middleware->>Middleware: Time Check: Expired ❌
-        
-        Note right of Middleware: "Graceful Rescue" Triggered
-        
-        Middleware->>Database: Check Session ID
-        Database-->>Middleware: Session Active (30 Days left)
-        
-        Middleware->>Client: 200 OK + New Token (Header)
+```ts
+await auth.sendOTP(email);
+await auth.verifyOTP(email, code);
 ```
+
+- OTPs are single-use
+- Auto-expire (10 minutes)
+- Stored server-side only
 
 ---
 
-## 🧪 Security & Testing
+## 📊 Benchmarks
 
-This library is 100% covered by tests using Vitest.
+AceAuth is benchmarked against:
+- Raw JWT
+- Passport.js
+- express-session
 
-- ✅ **Replay Protection:** OTPs are deleted immediately after use.  
-- ✅ **Tamper Proofing:** Tokens signed with invalid secrets are rejected immediately.  
-- ✅ **Lazy Cleanup:** Expired sessions are automatically cleaned up from the user index during read operations to prevent memory leaks.
+Results show AceAuth:
+- Outperforms Passport.js on hot paths
+- Retains server-side revocation
+- Trades minimal latency for correctness
+
+See **BENCHMARKS.md** for full data.
+
+---
+
+## 🔐 Security Guarantees
+
+- Server-side revocation
+- Token rotation handled internally
+- JWT payloads contain no user data
+- Bounded cache staleness (explicit)
+- Write throttling prevents DB overload
+
+---
+
+## ❓ When to Use AceAuth
+
+Use AceAuth if you need:
+- JWT-like scalability
+- Immediate logout across devices
+- Transparent refresh UX
+- Measured, explainable behavior
+
+Avoid if you want:
+- Pure stateless JWT only
+- Cookie-only sessions
+- OAuth / SSO (out of scope)
 
 ---
 
