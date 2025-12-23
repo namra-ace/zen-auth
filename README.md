@@ -54,8 +54,17 @@ sequenceDiagram
     Database-->>Middleware: Session Active (30 Days left)
     
     Middleware->>Client: 200 OK + New Token (Header)
-2. Secondary Indexing (Redis)To support getActiveSessions() efficiently without scanning the entire database (which is O(N) and slow), ZenAuth maintains a Secondary Index using Redis Sets.Key 1 (Data): session:123 $\rightarrow$ { user: 'A', ip: '...' }Key 2 (Index): idx:user:A $\rightarrow$ [ 'session:123', 'session:456' ]This ensures O(1) lookup performance even with millions of users.📦 InstallationBashnpm install zen-auth
-🚀 Quick Start1. InitializeZenAuth works with your existing database. Here is a Redis example:TypeScriptimport { ZenAuth, RedisStore } from 'zen-auth';
+2. Secondary Indexing (Redis)To support getActiveSessions() efficiently without scanning the entire database (which is O(N) and slow), ZenAuth maintains a Secondary Index using Redis Sets.Key 1 (Data): session:123 $\rightarrow$ { user: 'A', ip: '...' }Key 2 (Index): idx:user:A $\rightarrow$ [ 'session:123', 'session:456' ]This ensures O(1) lookup performance even with millions of users
+
+Installation
+``bash
+npm install zen-auth
+
+🚀 Quick Start
+1. Initialize
+ZenAuth works with your existing database. Here is a Redis example:
+TypeScript
+import { ZenAuth, RedisStore } from 'zen-auth';
 import { createClient } from 'redis';
 
 const redis = createClient();
