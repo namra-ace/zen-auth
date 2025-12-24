@@ -192,21 +192,21 @@ export class AceAuth {
   // DEVICE / SESSION MANAGEMENT
   // ==========================================
   async getActiveSessions(userId: string) {
-    const sessions = await this.options.store.findAllByUser(userId);
+  const sessions = await this.options.store.findAllByUser(userId);
 
-    return sessions.map((s) => {
-      const data = typeof s === 'string' ? JSON.parse(s) : s;
+  return sessions.map((s) => {
+    const data = typeof s === 'string' ? JSON.parse(s) : s;
 
-      return {
-        sessionId: 'hidden', // never expose raw session id
-        device: data._meta || {
-          ip: 'unknown',
-          userAgent: 'unknown',
-        },
-        loginAt: data._meta?.loginAt,
-        user: data,
-      };
-    });
-  }
+    return {
+      sessionId: 'hidden',
+      device: {
+        ip: data._meta?.ip,
+        userAgent: data._meta?.userAgent,
+      },
+      loginAt: data._meta?.loginAt,
+    };
+  });
+}
+
 
 }
